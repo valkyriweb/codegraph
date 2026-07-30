@@ -1,0 +1,18 @@
+# Sourced by ./cgdev. Pins Node 24: src/bin/codegraph.ts hard-exits on Node >= 25
+# (engines: >=20 <25) and this machine's default is 26.x.
+# The kernel is not built in this fork, so force the wasm extraction path.
+if [ -z "${CG_NODE:-}" ]; then
+  FNM_DIR="${FNM_DIR:-$HOME/.local/share/fnm}"
+  CG_NODE="$(ls -d "$FNM_DIR"/node-versions/v24.*/installation/bin/node 2>/dev/null | sort -V | tail -1)"
+fi
+if [ -z "${CG_NODE:-}" ] || [ ! -x "$CG_NODE" ]; then
+  echo "cgdev: no Node 24 found under \$FNM_DIR/node-versions." >&2
+  echo "       Install one with 'fnm install 24', or set CG_NODE=/path/to/node24." >&2
+  return 1 2>/dev/null || exit 1
+fi
+export CG_NODE
+export PATH="$(dirname "$CG_NODE"):$PATH"
+export CODEGRAPH_KERNEL=0
+export CODEGRAPH_TELEMETRY=0
+export DO_NOT_TRACK=1
+export CODEGRAPH_NO_UPDATE_CHECK=1

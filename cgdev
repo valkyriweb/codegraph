@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Dev wrapper: our patched source build, isolated HOME, native kernel off (wasm path).
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$HERE/.dev-env"
+export HOME="${CG_DEV_HOME:-/tmp/cg-dev-home}"
+mkdir -p "$HOME"
+exec "$CG_NODE" "$HERE/dist/bin/codegraph.js" "$@"

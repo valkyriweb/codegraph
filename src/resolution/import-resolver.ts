@@ -9,6 +9,7 @@ import * as path from 'path';
 import { Language, Node } from '../types';
 import { UnresolvedRef, ResolvedRef, ResolutionContext, ImportMapping, ReExport } from './types';
 import { applyAliases } from './path-aliases';
+import { extractLocalExportAliases } from './alias-binding';
 import { resolveWorkspaceImport } from './workspace-packages';
 import {
   resolveMethodOnType,
@@ -90,11 +91,26 @@ function getFileExportIndex(filePath: string, context: ResolutionContext): FileE
   let idx = perFile.get(filePath);
   if (!idx) {
     idx = { byName: new Map(), defaultComponent: undefined, defaultFnClass: undefined };
+    // Every declaration, exported or not: a local `export { impl as alias }`
+    // clause exports a declaration the extractor never flagged isExported.
+    const declared = new Map<string, Node>();
     for (const n of context.getNodesInFile(filePath)) {
+      if (!declared.has(n.name)) declared.set(n.name, n);
       if (!n.isExported) continue;
       if (!idx.byName.has(n.name)) idx.byName.set(n.name, n);
       if (idx.defaultComponent === undefined && n.kind === 'component') idx.defaultComponent = n;
       if (idx.defaultFnClass === undefined && (n.kind === 'function' || n.kind === 'class')) idx.defaultFnClass = n;
+    }
+    // Bind names introduced by a local export clause to their declarations, so
+    // an importer asking for the renamed name gets the real symbol instead of
+    // falling through to the name-matcher (which cannot cross the rename).
+    const content = context.readFile(filePath);
+    if (content && content.includes('export')) {
+      for (const { exportedName, localName } of extractLocalExportAliases(content)) {
+        if (idx.byName.has(exportedName)) continue;
+        const decl = declared.get(localName);
+        if (decl) idx.byName.set(exportedName, decl);
+      }
     }
     perFile.set(filePath, idx);
   }
@@ -377,6 +393,44 @@ function isExternalImport(
 }
 
 /**
+ * TypeScript's ESM/NodeNext rule: a relative specifier carries the EMITTED
+ * extension while the file on disk is the TS source — `import './x.js'`
+ * resolves to `x.ts`. `EXTENSION_RESOLUTION` only ever APPENDS a suffix, so a
+ * specifier that already ends in `.js` is tried as `x.js.ts`, `x.js.tsx`, …
+ * and then bare `x.js`, none of which exist in a TS project. Import resolution
+ * then returns null for EVERY relative import in the repo and the resolver
+ * falls through to the name-matcher, which cannot cross a rename — so an
+ * aliased or default export silently reports a false 0 callers.
+ *
+ * This is not an edge case: `"moduleResolution": "NodeNext"` REQUIRES the `.js`
+ * suffix, so an entire class of modern TS codebases resolves nothing (a 16k-file
+ * project measured 32,732 `.js` specifiers and 0 extensionless ones).
+ *
+ * Tried only AFTER the literal path, so a real emitted `.js` sitting on disk
+ * still wins and no currently-resolving import changes target.
+ */
+const TS_SOURCE_REWRITES: Array<[RegExp, string[]]> = [
+  [/\.js$/, ['.ts', '.tsx', '.d.ts']],
+  [/\.jsx$/, ['.tsx', '.jsx', '.d.ts']],
+  [/\.mjs$/, ['.mts', '.d.mts']],
+  [/\.cjs$/, ['.cts', '.d.cts']],
+];
+
+/** Languages whose specifiers may name emitted JS for an on-disk TS source. */
+const TS_SOURCE_LANGUAGES = new Set<string>(['typescript', 'tsx', 'arkts', 'svelte', 'vue', 'astro']);
+
+/** The TS source paths a JS-suffixed specifier may legally denote. */
+function tsSourceCandidates(candidatePath: string, language: Language): string[] {
+  if (!TS_SOURCE_LANGUAGES.has(language)) return [];
+  for (const [suffix, replacements] of TS_SOURCE_REWRITES) {
+    if (suffix.test(candidatePath)) {
+      return replacements.map((ext) => candidatePath.replace(suffix, ext));
+    }
+  }
+  return [];
+}
+
+/**
  * Resolve a relative import
  */
 function resolveRelativeImport(
@@ -423,6 +477,13 @@ function resolveRelativeImport(
     return relativePath;
   }
 
+  // `./x.js` naming the on-disk `./x.ts` (see TS_SOURCE_REWRITES).
+  for (const candidate of tsSourceCandidates(relativePath, language)) {
+    if (context.fileExists(candidate)) {
+      return candidate;
+    }
+  }
+
   return null;
 }
 
@@ -450,6 +511,9 @@ function resolveAliasedImport(
       if (context.fileExists(candidate)) return candidate;
     }
     if (context.fileExists(basePath)) return basePath;
+    for (const candidate of tsSourceCandidates(basePath, language)) {
+      if (context.fileExists(candidate)) return candidate;
+    }
     return null;
   };
 
