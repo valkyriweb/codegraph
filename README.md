@@ -859,3 +859,10 @@ MIT
 [Report Bug](https://github.com/colbymchenry/codegraph/issues) · [Request Feature](https://github.com/colbymchenry/codegraph/issues)
 
 </div>
+
+### Development Node versions
+
+The build and test tooling requires Node 20.19 or later in the Node 20 line,
+Node 22.12 or later in the Node 22 line, or Node 24. This development-tool
+requirement is separate from the package's runtime engine range. Run the full
+suite on Node 22 or 24; Node 20 lacks the built-in SQLite used by the tests.
