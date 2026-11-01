@@ -1,0 +1,46 @@
+name: Dependency checks
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm test
+        env:
+          CODEGRAPH_TELEMETRY: '0'
+  site:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+  worker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: telemetry-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - run: npm run check
